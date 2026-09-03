@@ -84,11 +84,31 @@ function looksLikeAudit(value: unknown): value is AuditResult {
   );
 }
 
+function hasValidCitations(result: AuditResult, input: AuditInput) {
+  const sources = {
+    "Event listing": input.eventListing,
+    "Venue notes": input.venueNotes,
+  } as const;
+
+  return result.findings.every((finding) => {
+    if (finding.status !== "needs-answer" && finding.evidence.length === 0) {
+      return false;
+    }
+
+    return finding.evidence.every((evidence) => {
+      const quote = evidence.quote.trim();
+      return quote.length >= 3 && sources[evidence.source].includes(quote);
+    });
+  });
+}
+
 export async function runGeminiAudit(input: AuditInput): Promise<AuditResult> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return runLocalAudit(input);
 
-  const model = process.env.GEMINI_MODEL || "gemini-3.7-flash";
+  // Keep the model configurable for deployments, with the current stable Flash
+  // model as the safe default for the v1beta generateContent REST endpoint.
+  const model = process.env.GEMINI_MODEL || "gemini-3.8-flash";
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
   const baseline = runLocalAudit(input);
 
@@ -113,7 +133,7 @@ export async function runGeminiAudit(input: AuditInput): Promise<AuditResult> {
         ],
         generationConfig: {
           responseMimeType: "application/json",
-          temperature: 0.1,
+          thinkingConfig: { thinkingLevel: "low" },
         },
       }),
       signal: AbortSignal.timeout(25_000),
@@ -129,6 +149,7 @@ export async function runGeminiAudit(input: AuditInput): Promise<AuditResult> {
 
     const parsed = JSON.parse(text) as unknown;
     if (!looksLikeAudit(parsed)) return baseline;
+    if (!hasValidCitations(parsed, input)) return baseline;
 
     return {
       ...parsed,

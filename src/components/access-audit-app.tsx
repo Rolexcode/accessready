@@ -15,7 +15,7 @@ import {
   Sparkles,
   TriangleAlert,
 } from "lucide-react";
-import { FormEvent, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AuditFinding,
   AuditInput,
@@ -96,6 +96,46 @@ function FindingCard({ finding }: { finding: AuditFinding }) {
   );
 }
 
+function ContradictionLead({ finding }: { finding: AuditFinding | undefined }) {
+  if (!finding) {
+    return (
+      <section className="contradiction-lead contradiction-clear" aria-labelledby="contradiction-title">
+        <div className="contradiction-icon">
+          <CheckCircle2 aria-hidden="true" />
+        </div>
+        <div>
+          <p className="eyebrow">Cross-source check</p>
+          <h2 id="contradiction-title">No direct contradiction found.</h2>
+          <p>Review the unanswered items below before you publish.</p>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="contradiction-lead" aria-labelledby="contradiction-title">
+      <div className="contradiction-icon">
+        <TriangleAlert aria-hidden="true" />
+      </div>
+      <div className="contradiction-copy">
+        <p className="eyebrow">The first thing to fix</p>
+        <h2 id="contradiction-title">The public promise and the venue detail disagree.</h2>
+        <p className="contradiction-why">
+          <strong>Why it matters:</strong> {finding.action}
+        </p>
+        <div className="contradiction-evidence" aria-label="Contradicting evidence">
+          {finding.evidence.slice(0, 2).map((evidence, index) => (
+            <blockquote key={`${evidence.source}-${index}`}>
+              <span>{evidence.source}</span>
+              “{evidence.quote}”
+            </blockquote>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function IdlePanel() {
   return (
     <section className="idle-panel" aria-labelledby="idle-title">
@@ -105,9 +145,9 @@ function IdlePanel() {
       <p className="eyebrow">What the audit does</p>
       <h2 id="idle-title">Unknown stays unknown.</h2>
       <p>
-        AccessReady checks what organizers claim against the details they
-        actually have. It never turns missing information into a confident
-        answer.
+        An event page can say “accessible” while the venue email says “three
+        steps.” AccessReady checks the claim against the details organizers
+        actually have, then keeps every unresolved point visible.
       </p>
       <ol className="audit-steps">
         <li>
@@ -132,6 +172,10 @@ function IdlePanel() {
           </div>
         </li>
       </ol>
+      <div className="ai-boundary">
+        <Sparkles aria-hidden="true" size={17} />
+        <p><strong>AI review, evidence boundary.</strong> It extracts claims, compares sources, prioritizes questions, and drafts from supplied facts. A citation verifier checks every quoted line against the source before accepting the AI result.</p>
+      </div>
     </section>
   );
 }
@@ -168,6 +212,8 @@ export default function AccessAuditApp() {
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const eventRef = useRef<HTMLTextAreaElement>(null);
+  const resultsRef = useRef<HTMLDivElement>(null);
+  const lastSubmittedRef = useRef<AuditInput | null>(null);
 
   const counts = useMemo(() => {
     if (!result) return null;
@@ -182,6 +228,13 @@ export default function AccessAuditApp() {
     };
   }, [result]);
 
+  useEffect(() => {
+    if (state === "success") {
+      resultsRef.current?.focus({ preventScroll: true });
+      resultsRef.current?.scrollIntoView({ block: "start", behavior: "auto" });
+    }
+  }, [state]);
+
   function loadSample() {
     setInput(sampleInput);
     setResult(null);
@@ -190,26 +243,17 @@ export default function AccessAuditApp() {
     setCopied(false);
   }
 
-  function clearAll() {
-    setInput({ eventListing: "", venueNotes: "" });
-    setResult(null);
-    setState("idle");
-    setError("");
-    setCopied(false);
-    requestAnimationFrame(() => eventRef.current?.focus());
-  }
-
-  async function submitAudit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function runAudit(auditInput: AuditInput) {
     setError("");
     setState("loading");
     setCopied(false);
+    lastSubmittedRef.current = auditInput;
 
     try {
       const response = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(input),
+        body: JSON.stringify(auditInput),
       });
       const payload = (await response.json()) as
         | AuditResult
@@ -231,6 +275,29 @@ export default function AccessAuditApp() {
       );
       setState("error");
     }
+  }
+
+  function runSampleDemo() {
+    setInput(sampleInput);
+    void runAudit(sampleInput);
+  }
+
+  function clearAll() {
+    setInput({ eventListing: "", venueNotes: "" });
+    setResult(null);
+    setState("idle");
+    setError("");
+    setCopied(false);
+    requestAnimationFrame(() => eventRef.current?.focus());
+  }
+
+  async function submitAudit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await runAudit(input);
+  }
+
+  function retryAudit() {
+    void runAudit(lastSubmittedRef.current ?? input);
   }
 
   async function copyGuide() {
@@ -268,14 +335,22 @@ export default function AccessAuditApp() {
               <span />Pre-event accessibility review
             </div>
             <h1 id="hero-title">
-              Make access information clear
-              <em>before anyone reaches the door.</em>
+              “Wheelchair accessible.”
+              <em>“Three steps at the main entrance.”</em>
             </h1>
             <p>
-              Turn scattered event listings and venue notes into a traceable
-              readiness check, practical follow-up questions, and an honest
-              attendee guide.
+              AccessReady compares the public promise with the venue reality,
+              so organizers can resolve the contradiction before an attendee
+              reaches the door.
             </p>
+            <div className="hero-actions">
+              <button className="demo-button" type="button" onClick={runSampleDemo} disabled={state === "loading"} aria-busy={state === "loading"}>
+                <Sparkles aria-hidden="true" size={18} />
+                {state === "loading" ? "Running judge demo…" : "Run the 30-second demo"}
+                <ArrowRight aria-hidden="true" size={17} />
+              </button>
+              <span>Seeded case: one claim, one venue email, one publish decision.</span>
+            </div>
           </div>
           <aside className="hero-principle" aria-label="AccessReady principle">
             <Sparkles aria-hidden="true" size={20} />
@@ -293,10 +368,10 @@ export default function AccessAuditApp() {
             <div className="panel-heading">
               <div>
                 <p className="eyebrow">Source material</p>
-                <h2>Paste what attendees will see.</h2>
+                <h2>Use your own sources.</h2>
               </div>
               <button className="text-button" type="button" onClick={loadSample}>
-                Load sample
+                Use sample sources
               </button>
             </div>
 
@@ -412,10 +487,15 @@ export default function AccessAuditApp() {
                 >
                   Review sources
                 </button>
+                <button className="primary-button error-retry" type="button" onClick={retryAudit}>
+                  <RotateCcw aria-hidden="true" size={17} />
+                  Try the audit again
+                </button>
               </section>
             ) : null}
             {state === "success" && result && counts ? (
-              <div className="results" aria-live="polite">
+              <div className="results" ref={resultsRef} tabIndex={-1} aria-live="polite">
+                <ContradictionLead finding={result.findings.find((item) => item.status === "conflict")} />
                 <section className="result-summary">
                   <div
                     className="score-block"
@@ -455,6 +535,23 @@ export default function AccessAuditApp() {
                     <span>Conflicts</span>
                   </div>
                 </div>
+
+                <section className="ai-method" aria-labelledby="ai-method-title">
+                  <div className="ai-method-heading">
+                    <Sparkles aria-hidden="true" size={19} />
+                    <div>
+                      <p className="eyebrow">How the review works</p>
+                      <h2 id="ai-method-title">AI finds the information mess. Evidence keeps it honest.</h2>
+                    </div>
+                  </div>
+                  <div className="ai-method-grid">
+                    <span><strong>01</strong>Extract semantic claims</span>
+                    <span><strong>02</strong>Detect cross-source conflicts</span>
+                    <span><strong>03</strong>Prioritize clarification questions</span>
+                    <span><strong>04</strong>Draft an evidence-constrained guide</span>
+                  </div>
+                  <p className="ai-method-footnote">{result.mode === "gemini" ? "Gemini supplied the semantic review; the citation verifier confirmed every quoted line against the supplied sources." : "No Gemini key was detected, so this run used the deterministic demo fallback."}</p>
+                </section>
 
                 <section className="findings-section" aria-labelledby="findings-title">
                   <div className="section-heading">
